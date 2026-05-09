@@ -1,0 +1,4 @@
+cache_sim
+*.o
+*.obj
+*.exe
