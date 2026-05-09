@@ -1,18 +1,17 @@
 ! ============================================================================
-! File         : WAWT_validation.txt
+! File         : trace_file.txt
 ! Author       : <your name>
 ! Student ID   : <your student ID>
 ! Created      : 2026-05-09
 ! Last modified: 2026-05-09
 !
 ! Purpose
-!   Validates the cache controller simulator for the
-!   Write-Allocate / Write-Through (WAWT) policy.
+!   Validates the direct-mapped cache simulator (cache_sim) for a
+!   write-allocate / write-through cache.
 !
 ! Command line used for validation:
-!   cachesim WAWT_validation.txt WAWT 256 16
+!   cache_sim trace_file.txt 256 16
 !
-!   write_policy    = WAWT
 !   blocks_in_cache = 256          (8 index bits)
 !   words_in_block  = 16           (4 offset bits)
 !   tag bits        = 32 - 8 - 4 = 20
@@ -25,7 +24,12 @@
 !     +----------------+   +-------+      +---+
 !     20 bits = 5 hex     8 bits = 2 hex   4 bits = 1 hex
 !
-! Decision paths exercised (all 6 WAWT branches):
+!   so an address xxxxxIIo decodes as
+!     tag    = 0xxxxxx     (top 5 hex digits)
+!     index  = 0xII        (next 2 hex digits)
+!     offset = 0xo         (last hex digit)
+!
+! Decision paths exercised (all 6 branches of the flowchart):
 !   1. Read  hit                                   (RH)
 !   2. Read  miss on invalid block                 (RM-invalid)
 !   3. Read  miss on valid block, different tag    (RM-valid)
@@ -34,18 +38,26 @@
 !   6. Write miss on valid block, different tag    (WM-valid)
 !
 ! Note on counter uniqueness
-!   Under WAWT every CPU write produces exactly one external memory write
-!   (write-through), so by construction
+!   For a write-allocate / write-through cache, every CPU write produces
+!   exactly one external memory write, so by construction
 !       NWA = NCWH + NCWM = CPUW.
 !   This single equality is a structural property of the policy and cannot
-!   be broken by trace design.  Every other pair of numeric outputs in this
-!   validation is distinct, so any counter swap that does not involve the
-!   CPUW <-> NWA pair will change the output line.
+!   be broken by trace design.  Every other pair of counter values is
+!   distinct, so any counter swap that does not involve the CPUW <-> NWA
+!   pair will change the simulator's output.
 !
-! Expected final simulator output line:
-!   5 10 144 10 2 3 4 6 16 256 WAWT_validation.txt WAWT
-!     CPUR=5  CPUW=10  NRA=144  NWA=10
-!     NCRH=2  NCRM=3   NCWH=4   NCWM=6   WIB=16  BIC=256
+! Expected simulator output:
+!   CPUR =   5
+!   CPUW =  10
+!   NCRH =   2
+!   NCRM =   3
+!   NCWH =   4
+!   NCWM =   6
+!   NRA  = 144
+!   NWA  =  10        (= CPUW, see note above)
+!   WIB  =  16
+!   BIC  = 256
+!   file = trace_file.txt
 ! ============================================================================
 
 
@@ -69,15 +81,14 @@ R 00001001 0000
 ! Op 3 - read miss on a valid block with a different tag (RM-valid).
 !   Pre-state : block[0x00] valid, tag=0x00001.
 !   Address   : tag=0x00002, index=0x00, offset=0x0
-!   Tags differ -> miss.  WAWT has no dirty bit, so no write back; just
-!   load the new block.
+!   Tags differ -> miss.  Load the new block (16 words).
 !   After     : NCRM=2, NRA=32.  Block now: valid, tag=0x00002.
 ! ----------------------------------------------------------------------------
 R 00002000 0000
 
 ! ----------------------------------------------------------------------------
 ! Op 4 - read hit on the freshly loaded block (RH).
-!   After     : NCRH=2.    (read hits target reached)
+!   After     : NCRH=2.    (read-hit target reached)
 ! ----------------------------------------------------------------------------
 R 00002001 0000
 
@@ -92,7 +103,7 @@ R 00003000 0000
 ! ----------------------------------------------------------------------------
 ! Op 6 - write hit on the resident block (WH).
 !   Address   : tag=0x00003, index=0x00, offset=0x1 -> hit.
-!   WAWT writes the 1 word through to memory.
+!   Write the 1 word through to memory.
 !   After     : NCWH=1, NWA=1.
 ! ----------------------------------------------------------------------------
 W 00003001 1111
@@ -111,7 +122,7 @@ W 00003003 3333
 
 ! ----------------------------------------------------------------------------
 ! Op 9 - write hit (WH).
-!   After     : NCWH=4, NWA=4.    (write hits target reached)
+!   After     : NCWH=4, NWA=4.    (write-hit target reached)
 ! ----------------------------------------------------------------------------
 W 00003004 4444
 
@@ -171,6 +182,6 @@ W 00000020 AAAA
 !   CPUR =   5   CPUW =  10
 !   NCRH =   2   NCRM =   3
 !   NCWH =   4   NCWM =   6
-!   NRA  = 144   NWA  =  10   (NWA == CPUW by construction of WAWT)
+!   NRA  = 144   NWA  =  10   (NWA == CPUW by construction)
 !   WIB  =  16   BIC  = 256
 ! ============================================================================

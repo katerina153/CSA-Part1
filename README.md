@@ -1,34 +1,18 @@
 # CSA-Part1 — Direct-Mapped Cache Simulator
 
 C program that simulates the operation of a direct-mapped cache controller
-for a processor with a 32-bit address bus and a 16-bit data bus. Both
-**Write-Allocate / Write-Back (WAWB)** and **Write-Allocate / Write-Through
-(WAWT)** policies are supported.
-
-> **Important — academic integrity**
-> The lab brief states: *"The program must not be stored in a software
-> repository, such as GitHub, with shared access."* Make sure this repository
-> is **private** and not shared with anyone else, and remember to remove or
-> replace the placeholder author / student-ID fields before submission.
+for a processor with a 32-bit address bus and a 16-bit data bus. The cache
+is **write-allocate / write-through**: every CPU write also writes one word
+straight through to main memory, and a write that misses still loads the
+containing block first.
 
 ## Files
 
-| file | purpose |
-|------|---------|
-| `cachesim.c`           | the simulator (single C17 source file) |
-| `WAWB_validation.txt`  | validation trace for the WAWB policy |
-| `WAWT_validation.txt`  | validation trace for the WAWT policy |
-| `Makefile`             | convenience build / validate / clean targets |
-
-When submitting on Canvas, rename the files to match the spec:
-
-```
-<familyname>_<studentID>_cachesim.c
-<familyname>_<studentID>_WAWB_validation.txt
-<familyname>_<studentID>_WAWT_validation.txt
-```
-
-(e.g. `Green_1234567_cachesim.c`).
+| file              | purpose                                            |
+|-------------------|----------------------------------------------------|
+| `cache_sim.c`     | the simulator (single C17 source file)             |
+| `trace_file.txt`  | validation trace that exercises every branch       |
+| `Makefile`        | convenience build / run / clean targets            |
 
 ## Build
 
@@ -41,38 +25,53 @@ This compiles with `gcc -std=c17 -Wall -Wextra -O2`.
 ## Usage
 
 ```text
-cachesim trace_filename write_policy blocks_in_cache words_in_block
+cache_sim trace_file blocks_in_cache words_in_block
 ```
 
 | argument          | accepted values                                |
 |-------------------|------------------------------------------------|
-| `trace_filename`  | path to a memory-trace `.txt` file             |
-| `write_policy`    | `WAWB` or `WAWT`                               |
+| `trace_file`      | path to a memory-trace `.txt` file             |
 | `blocks_in_cache` | power of 2 in `[2, 512]`                       |
 | `words_in_block`  | power of 2 in `[2, 256]`                       |
 
+Example:
+
+```bash
+./cache_sim trace_file.txt 256 16
+```
+
 ## Output
 
-A single line of 12 space-separated items written to `stdout`:
+One labelled counter per line, finishing with the cache geometry and the
+trace file name:
 
 ```text
-CPUR CPUW NRA NWA NCRH NCRM NCWH NCWM WIB BIC filename WP
+CPUR = ...
+CPUW = ...
+NCRH = ...
+NCRM = ...
+NCWH = ...
+NCWM = ...
+NRA  = ...
+NWA  = ...
+WIB  = ...
+BIC  = ...
+file = ...
 ```
 
 | field      | meaning                                         |
 |------------|-------------------------------------------------|
 | `CPUR`     | total CPU read accesses                         |
 | `CPUW`     | total CPU write accesses                        |
-| `NRA`      | words read  from external memory                |
-| `NWA`      | words written to external memory                |
 | `NCRH`     | cache read  hits                                |
 | `NCRM`     | cache read  misses                              |
 | `NCWH`     | cache write hits                                |
 | `NCWM`     | cache write misses                              |
-| `WIB`      | words in a cache block                          |
-| `BIC`      | blocks in the cache                             |
-| `filename` | trace file path that was simulated              |
-| `WP`       | write policy (`WAWB` or `WAWT`)                 |
+| `NRA`      | words read  from external memory                |
+| `NWA`      | words written to external memory                |
+| `WIB`      | words in a cache block (echo of `words_in_block`)  |
+| `BIC`      | blocks in the cache (echo of `blocks_in_cache`) |
+| `file`     | trace file path that was simulated              |
 
 ## Trace file format
 
@@ -88,31 +87,42 @@ W<sp>address<sp>data       hexadecimal write access
 
 ## Validation
 
-Run both validation traces:
+```bash
+make run
+```
+
+equivalent to:
 
 ```bash
-make validate
+./cache_sim trace_file.txt 256 16
 ```
 
 ### Expected output
 
 ```text
-8 6 112 32 5 3 2 4 16 256 WAWB_validation.txt WAWB
-5 10 144 10 2 3 4 6 16 256 WAWT_validation.txt WAWT
+CPUR = 5
+CPUW = 10
+NCRH = 2
+NCRM = 3
+NCWH = 4
+NCWM = 6
+NRA  = 144
+NWA  = 10
+WIB  = 16
+BIC  = 256
+file = trace_file.txt
 ```
 
-`WAWB_validation.txt` exercises **all 8** decision paths of the WAWB
-flowchart (RH; RM-invalid / RM-valid-clean / RM-valid-dirty; WH;
-WM-invalid / WM-valid-clean / WM-valid-dirty) and every numeric output
-value is distinct.
+`trace_file.txt` exercises **all 6** decision paths of the flowchart
+(`RH`, `RM-invalid`, `RM-valid`, `WH`, `WM-invalid`, `WM-valid`) and is
+laid out so the offset / index / tag fields fall on hex-digit boundaries
+(1 / 2 / 5 hex digits respectively). Each individual `R` / `W` line is
+preceded by a numbered comment block (`Op 1`, `Op 2`, …) that explains
+which branch it tests, the decoded `tag` / `index` / `offset` of the
+address, and the cumulative counter values after the access.
 
-`WAWT_validation.txt` exercises **all 6** decision paths of the WAWT
-flowchart (RH; RM-invalid / RM-valid; WH; WM-invalid / WM-valid). Under
-WAWT every CPU write produces exactly one external write, so
-`NWA == CPUW` is a structural property of the policy and cannot be
-broken by trace design; every other pair of numeric outputs is distinct.
-
-Each trace file contains a comment header (filename, author, student ID,
-date, command-line parameters) and section comments that describe what is
-being validated and the expected counter values after each operation, as
-required by the lab brief.
+For a write-allocate / write-through cache, every CPU write produces
+exactly one external write, so `NWA == CPUW` is a structural property of
+the policy and cannot be removed by trace design. Every other pair of
+counter values in the output is distinct, so any counter swap that does
+not involve the `CPUW` / `NWA` pair changes the simulator's output.
