@@ -1,0 +1,187 @@
+! ============================================================================
+! File         : trace_file.txt
+! Author       : <your name>
+! Student ID   : <your student ID>
+! Created      : 2026-05-09
+! Last modified: 2026-05-09
+!
+! Purpose
+!   Validates the direct-mapped cache simulator (cache_sim) for a
+!   write-allocate / write-through cache.
+!
+! Command line used for validation:
+!   cache_sim trace_file.txt 256 16
+!
+!   blocks_in_cache = 256          (8 index bits)
+!   words_in_block  = 16           (4 offset bits)
+!   tag bits        = 32 - 8 - 4 = 20
+!
+! Address layout (32 bits, written as 8 hex digits)
+!
+!     digit 7 6 5 4 3      digit 2 1      digit 0
+!     +----------------+   +-------+      +---+
+!     |     Tag        |   | Index |      |Off|
+!     +----------------+   +-------+      +---+
+!     20 bits = 5 hex     8 bits = 2 hex   4 bits = 1 hex
+!
+!   so an address xxxxxIIo decodes as
+!     tag    = 0xxxxxx     (top 5 hex digits)
+!     index  = 0xII        (next 2 hex digits)
+!     offset = 0xo         (last hex digit)
+!
+! Decision paths exercised (all 6 branches of the flowchart):
+!   1. Read  hit                                   (RH)
+!   2. Read  miss on invalid block                 (RM-invalid)
+!   3. Read  miss on valid block, different tag    (RM-valid)
+!   4. Write hit (writes 1 word through to memory) (WH)
+!   5. Write miss on invalid block                 (WM-invalid)
+!   6. Write miss on valid block, different tag    (WM-valid)
+!
+! Note on counter uniqueness
+!   For a write-allocate / write-through cache, every CPU write produces
+!   exactly one external memory write, so by construction
+!       NWA = NCWH + NCWM = CPUW.
+!   This single equality is a structural property of the policy and cannot
+!   be broken by trace design.  Every other pair of counter values is
+!   distinct, so any counter swap that does not involve the CPUW <-> NWA
+!   pair will change the simulator's output.
+!
+! Expected simulator output:
+!   CPUR =   5
+!   CPUW =  10
+!   NCRH =   2
+!   NCRM =   3
+!   NCWH =   4
+!   NCWM =   6
+!   NRA  = 144
+!   NWA  =  10        (= CPUW, see note above)
+!   WIB  =  16
+!   BIC  = 256
+!   file = trace_file.txt
+! ============================================================================
+
+
+! ----------------------------------------------------------------------------
+! Op 1 - cold read miss on cache index 0x00 (RM-invalid).
+!   Pre-state : block[0x00] is invalid.
+!   Address   : tag=0x00001, index=0x00, offset=0x0
+!   Action    : load 16 words from memory; mark block valid, tag=1.
+!   After     : NCRM=1, NRA=16.
+! ----------------------------------------------------------------------------
+R 00001000 0000
+
+! ----------------------------------------------------------------------------
+! Op 2 - read hit on the just-loaded block (RH).
+!   Address   : tag=0x00001, index=0x00, offset=0x1 -> hit.
+!   After     : NCRH=1.
+! ----------------------------------------------------------------------------
+R 00001001 0000
+
+! ----------------------------------------------------------------------------
+! Op 3 - read miss on a valid block with a different tag (RM-valid).
+!   Pre-state : block[0x00] valid, tag=0x00001.
+!   Address   : tag=0x00002, index=0x00, offset=0x0
+!   Tags differ -> miss.  Load the new block (16 words).
+!   After     : NCRM=2, NRA=32.  Block now: valid, tag=0x00002.
+! ----------------------------------------------------------------------------
+R 00002000 0000
+
+! ----------------------------------------------------------------------------
+! Op 4 - read hit on the freshly loaded block (RH).
+!   After     : NCRH=2.    (read-hit target reached)
+! ----------------------------------------------------------------------------
+R 00002001 0000
+
+! ----------------------------------------------------------------------------
+! Op 5 - another RM-valid to reach NCRM=3.
+!   Pre-state : block[0x00] valid, tag=0x00002.
+!   Address   : tag=0x00003, index=0x00, offset=0x0 -> miss.
+!   After     : NCRM=3, NRA=48.  Block now: valid, tag=0x00003.
+! ----------------------------------------------------------------------------
+R 00003000 0000
+
+! ----------------------------------------------------------------------------
+! Op 6 - write hit on the resident block (WH).
+!   Address   : tag=0x00003, index=0x00, offset=0x1 -> hit.
+!   Write the 1 word through to memory.
+!   After     : NCWH=1, NWA=1.
+! ----------------------------------------------------------------------------
+W 00003001 1111
+
+! ----------------------------------------------------------------------------
+! Op 7 - write hit (WH).
+!   After     : NCWH=2, NWA=2.
+! ----------------------------------------------------------------------------
+W 00003002 2222
+
+! ----------------------------------------------------------------------------
+! Op 8 - write hit (WH).
+!   After     : NCWH=3, NWA=3.
+! ----------------------------------------------------------------------------
+W 00003003 3333
+
+! ----------------------------------------------------------------------------
+! Op 9 - write hit (WH).
+!   After     : NCWH=4, NWA=4.    (write-hit target reached)
+! ----------------------------------------------------------------------------
+W 00003004 4444
+
+! ----------------------------------------------------------------------------
+! Op 10 - write miss on a valid block with a different tag (WM-valid).
+!   Pre-state : block[0x00] valid, tag=0x00003.
+!   Address   : tag=0x00004, index=0x00, offset=0x0 -> miss.
+!   Write-allocate: load 16 words from memory.
+!   Write-through: also write the new word to memory.
+!   After     : NCWM=1, NRA=64, NWA=5.  Block now: valid, tag=0x00004.
+! ----------------------------------------------------------------------------
+W 00004000 5555
+
+! ----------------------------------------------------------------------------
+! Op 11 - WM-valid (different tag again).
+!   Address   : tag=0x00005 -> miss.
+!   After     : NCWM=2, NRA=80, NWA=6.   Block now: valid, tag=0x00005.
+! ----------------------------------------------------------------------------
+W 00005000 6666
+
+! ----------------------------------------------------------------------------
+! Op 12 - WM-valid.
+!   Address   : tag=0x00006 -> miss.
+!   After     : NCWM=3, NRA=96, NWA=7.   Block now: valid, tag=0x00006.
+! ----------------------------------------------------------------------------
+W 00006000 7777
+
+! ----------------------------------------------------------------------------
+! Op 13 - WM-valid (4th WM-valid).
+!   Address   : tag=0x00007 -> miss.
+!   After     : NCWM=4, NRA=112, NWA=8.  Block now: valid, tag=0x00007.
+! ----------------------------------------------------------------------------
+W 00007000 8888
+
+! ----------------------------------------------------------------------------
+! Op 14 - write miss on an invalid block (WM-invalid).
+!   Pre-state : block[0x01] is invalid (never touched).
+!   Address   : tag=0x00000, index=0x01, offset=0x0
+!   Cold miss; write-allocate (load) plus write-through (1 word).
+!   After     : NCWM=5, NRA=128, NWA=9.
+!               block[0x01] now: valid, tag=0x00000.
+! ----------------------------------------------------------------------------
+W 00000010 9999
+
+! ----------------------------------------------------------------------------
+! Op 15 - another WM-invalid to reach NCWM=6 (final target).
+!   Pre-state : block[0x02] is invalid.
+!   Address   : tag=0x00000, index=0x02, offset=0x0
+!   After     : NCWM=6, NRA=144, NWA=10.
+!               block[0x02] now: valid, tag=0x00000.
+! ----------------------------------------------------------------------------
+W 00000020 AAAA
+
+
+! ============================================================================
+! End of trace.  Final cumulative counter values
+!   CPUR =   5   CPUW =  10
+!   NCRH =   2   NCRM =   3
+!   NCWH =   4   NCWM =   6
+!   NRA  = 144   NWA  =  10   (NWA == CPUW by construction)
+!   WIB  =  16   BIC  = 256
+! ============================================================================
