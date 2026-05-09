@@ -17,10 +17,18 @@
 !   words_in_block  = 16           (4 offset bits)
 !   tag bits        = 32 - 8 - 4 = 20
 !
-! Address layout (32 bits):
-!   bits 31 .. 12 : Tag             (5 hex digits)
-!   bits 11 ..  4 : Cache block ID  (2 hex digits)
-!   bits  3 ..  0 : Block offset    (1 hex digit)
+! Address layout (32 bits, written as 8 hex digits)
+!
+!     digit 7 6 5 4 3      digit 2 1      digit 0
+!     +----------------+   +-------+      +---+
+!     |     Tag        |   | Index |      |Off|
+!     +----------------+   +-------+      +---+
+!     20 bits = 5 hex     8 bits = 2 hex   4 bits = 1 hex
+!
+!   so an address xxxxxIIo decodes as
+!     tag    = 0xxxxxx     (top 5 hex digits)
+!     index  = 0xII        (next 2 hex digits)
+!     offset = 0xo         (last hex digit)
 !
 ! Decision paths exercised (all 8 WAWB branches):
 !   1. Read  hit                                          (RH)
@@ -37,114 +45,134 @@
 !     CPUR=8  CPUW=6  NRA=112  NWA=32
 !     NCRH=5  NCRM=3  NCWH=2   NCWM=4   WIB=16  BIC=256
 !
-!   All ten numeric output values are distinct, so an accidental swap of any
+!   All ten numeric output values are distinct, so any accidental swap of
 !   two counters in the simulator would change the output line.
 ! ============================================================================
 
 
 ! ----------------------------------------------------------------------------
-! Section 1: cold read miss (RM-invalid)
-! Cache block 0x00 is invalid -> read miss, load block, no write back.
-!   counters: NCRM=1, NRA=16
+! Op 1 - cold read miss on cache index 0x00 (RM-invalid).
+!   Pre-state : block[0x00] is invalid.
+!   Address   : tag=0x00001, index=0x00, offset=0x0
+!   Action    : load 16 words from memory; mark block valid, clean, tag=1.
+!   After     : NCRM=1, NRA=16.
 ! ----------------------------------------------------------------------------
 R 00001000 0000
 
-
 ! ----------------------------------------------------------------------------
-! Section 2: read hits in the same block (RH)
-! Block 0x00 now holds tag 0x00001 and is clean.
-!   counters: NCRH=1, NCRH=2  (cumulative 1, 2)
+! Op 2 - read hit on the just-loaded block (RH).
+!   Address   : tag=0x00001, index=0x00, offset=0x1
+!   Same tag/index as the resident block -> hit.
+!   After     : NCRH=1.
 ! ----------------------------------------------------------------------------
 R 00001001 0000
-R 00001002 0000
-
 
 ! ----------------------------------------------------------------------------
-! Section 3: read miss evicting a valid+clean block (RM-valid-clean)
-! Block 0x00 holds tag 0x00001, dirty=0.  New address has tag 0x00002.
-! No write back; load block with tag 0x00002.
-!   counters: NCRM=2, NRA=32
+! Op 3 - another read hit in the same block (RH).
+!   Address   : tag=0x00001, index=0x00, offset=0x2
+!   After     : NCRH=2.
+! ----------------------------------------------------------------------------
+R 00001002 0000
+
+! ----------------------------------------------------------------------------
+! Op 4 - read miss evicting a valid+clean block (RM-valid-clean).
+!   Pre-state : block[0x00] valid, dirty=0, tag=0x00001.
+!   Address   : tag=0x00002, index=0x00, offset=0x0
+!   Tags differ and old block is clean -> no write back; load new block.
+!   After     : NCRM=2, NRA=32.  Block now: valid, dirty=0, tag=0x00002.
 ! ----------------------------------------------------------------------------
 R 00002000 0000
 
-
 ! ----------------------------------------------------------------------------
-! Section 4: more read hits (RH)
-!   counters: NCRH=3, NCRH=4
+! Op 5 - read hit on the new block (RH).
+!   After     : NCRH=3.
 ! ----------------------------------------------------------------------------
 R 00002001 0000
-R 00002002 0000
-
 
 ! ----------------------------------------------------------------------------
-! Section 5: write hit (WH)
-! Block 0x00 has tag 0x00002 and is clean.  Writing to it sets the dirty bit.
-! No external memory access (write back policy).
-!   counters: NCWH=1
+! Op 6 - read hit (RH).
+!   After     : NCRH=4.
+! ----------------------------------------------------------------------------
+R 00002002 0000
+
+! ----------------------------------------------------------------------------
+! Op 7 - write hit; sets the dirty bit (WH).
+!   Pre-state : block[0x00] valid, dirty=0, tag=0x00002.
+!   Address   : tag=0x00002, index=0x00, offset=0x3 -> hit.
+!   WAWB      : memory is NOT touched; just set dirty=1.
+!   After     : NCWH=1.  Block now: valid, dirty=1, tag=0x00002.
 ! ----------------------------------------------------------------------------
 W 00002003 ABCD
 
-
 ! ----------------------------------------------------------------------------
-! Section 6: read miss evicting valid+dirty block (RM-valid-dirty)
-! Block 0x00 has tag 0x00002, dirty=1 -> the 16 words must be written back to
-! external memory before the new block (tag 0x00003) is loaded.
-!   counters: NCRM=3, NWA=16, NRA=48
+! Op 8 - read miss evicting a valid+dirty block (RM-valid-dirty).
+!   Pre-state : block[0x00] valid, dirty=1, tag=0x00002.
+!   Address   : tag=0x00003, index=0x00, offset=0x0
+!   Tags differ and old block is dirty -> write back 16 words FIRST,
+!   then load 16 words for the new block.
+!   After     : NCRM=3, NWA=16, NRA=48.
+!               Block now: valid, dirty=0, tag=0x00003.
 ! ----------------------------------------------------------------------------
 R 00003000 0000
 
-
 ! ----------------------------------------------------------------------------
-! Section 7: read hit on the freshly loaded clean block (RH)
-!   counters: NCRH=5
+! Op 9 - read hit on the freshly loaded clean block (RH).
+!   After     : NCRH=5.    (read hits target reached)
 ! ----------------------------------------------------------------------------
 R 00003001 0000
 
-
 ! ----------------------------------------------------------------------------
-! Section 8: write miss evicting valid+clean block (WM-valid-clean)
-! Block 0x00 holds tag 0x00003, dirty=0.  Write to a different tag (0x00004)
-! triggers a write miss with no write back.  Block becomes dirty.
-!   counters: NCWM=1, NRA=64
+! Op 10 - write miss evicting a valid+clean block (WM-valid-clean).
+!   Pre-state : block[0x00] valid, dirty=0, tag=0x00003.
+!   Address   : tag=0x00004, index=0x00, offset=0x0
+!   Tags differ and old block is clean -> no write back; load new block;
+!   write the new word into the cache and mark the block dirty.
+!   After     : NCWM=1, NRA=64.  Block now: valid, dirty=1, tag=0x00004.
 ! ----------------------------------------------------------------------------
 W 00004000 1111
 
-
 ! ----------------------------------------------------------------------------
-! Section 9: write hit on the new dirty block (WH)
-!   counters: NCWH=2
+! Op 11 - write hit on the new dirty block (WH).
+!   Already dirty, stays dirty.
+!   After     : NCWH=2.    (write hits target reached)
 ! ----------------------------------------------------------------------------
 W 00004001 2222
 
-
 ! ----------------------------------------------------------------------------
-! Section 10: write miss evicting valid+dirty block (WM-valid-dirty)
-! Block 0x00 holds tag 0x00004, dirty=1.  A write to tag 0x00005 forces a
-! write back of the 16 words and load of the new block.
-!   counters: NCWM=2, NWA=32, NRA=80
+! Op 12 - write miss evicting a valid+dirty block (WM-valid-dirty).
+!   Pre-state : block[0x00] valid, dirty=1, tag=0x00004.
+!   Address   : tag=0x00005, index=0x00, offset=0x0
+!   Tags differ and old block is dirty -> write back 16 words; load 16
+!   words for the new block; new block becomes dirty.
+!   After     : NCWM=2, NWA=32, NRA=80.
+!               Block now: valid, dirty=1, tag=0x00005.
 ! ----------------------------------------------------------------------------
 W 00005000 3333
 
-
 ! ----------------------------------------------------------------------------
-! Section 11: write miss on a different invalid block (WM-invalid)
-! Block 0x01 has never been touched -> cold write miss.  No write back.
-!   counters: NCWM=3, NRA=96
+! Op 13 - write miss on a different invalid block (WM-invalid).
+!   Pre-state : block[0x01] is invalid (never touched).
+!   Address   : tag=0x00000, index=0x01, offset=0x0
+!   No write back (slot was invalid).  Allocate the block; mark dirty.
+!   After     : NCWM=3, NRA=96.
+!               block[0x01] now: valid, dirty=1, tag=0x00000.
 ! ----------------------------------------------------------------------------
 W 00000010 4444
 
-
 ! ----------------------------------------------------------------------------
-! Section 12: another write miss on a different invalid block (WM-invalid)
-! Block 0x02 cold miss.  Adds the 4th write miss so that the final NCWM value
-! (=4) is distinct from every other counter.
-!   counters: NCWM=4, NRA=112
+! Op 14 - another write miss on a different invalid block (WM-invalid).
+!   Pre-state : block[0x02] is invalid (never touched).
+!   Address   : tag=0x00000, index=0x02, offset=0x0
+!   Adds the 4th write miss so the final NCWM (=4) is distinct from every
+!   other counter in the output.
+!   After     : NCWM=4, NRA=112.
+!               block[0x02] now: valid, dirty=1, tag=0x00000.
 ! ----------------------------------------------------------------------------
 W 00000020 5555
 
 
 ! ============================================================================
-! End of trace.  Final cumulative counter values:
+! End of trace.  Final cumulative counter values
 !   CPUR =   8   CPUW =   6
 !   NCRH =   5   NCRM =   3
 !   NCWH =   2   NCWM =   4
