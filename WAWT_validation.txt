@@ -1,0 +1,135 @@
+! ============================================================================
+! File         : WAWT_validation.txt
+! Author       : <your name>
+! Student ID   : <your student ID>
+! Created      : 2026-05-09
+! Last modified: 2026-05-09
+!
+! Purpose
+!   Validates the cache controller simulator for the
+!   Write-Allocate / Write-Through (WAWT) policy.
+!
+! Command line used for validation:
+!   cachesim WAWT_validation.txt WAWT 256 16
+!
+!   write_policy    = WAWT
+!   blocks_in_cache = 256          (8 index bits)
+!   words_in_block  = 16           (4 offset bits)
+!   tag bits        = 32 - 8 - 4 = 20
+!
+! Address layout (32 bits):
+!   bits 31 .. 12 : Tag             (5 hex digits)
+!   bits 11 ..  4 : Cache block ID  (2 hex digits)
+!   bits  3 ..  0 : Block offset    (1 hex digit)
+!
+! Decision paths exercised (all 6 WAWT branches):
+!   1. Read  hit                                   (RH)
+!   2. Read  miss on invalid block                 (RM-invalid)
+!   3. Read  miss on valid block, different tag    (RM-valid)
+!   4. Write hit (writes 1 word through to memory) (WH)
+!   5. Write miss on invalid block                 (WM-invalid)
+!   6. Write miss on valid block, different tag    (WM-valid)
+!
+! Note on counter uniqueness
+!   Under WAWT every CPU write produces exactly one external memory write
+!   (write-through), so by construction
+!       NWA = NCWH + NCWM = CPUW.
+!   This single equality is a structural property of the policy and cannot
+!   be removed by trace design.  Every other pair of numeric outputs in
+!   this validation is distinct, so any counter swap that does not involve
+!   the CPUW <-> NWA pair is detectable.
+!
+! Expected final simulator output line:
+!   5 10 144 10 2 3 4 6 16 256 WAWT_validation.txt WAWT
+!     CPUR=5  CPUW=10  NRA=144  NWA=10
+!     NCRH=2  NCRM=3   NCWH=4   NCWM=6   WIB=16  BIC=256
+! ============================================================================
+
+
+! ----------------------------------------------------------------------------
+! Section 1: cold read miss (RM-invalid)
+! Block 0x00 is invalid -> read miss, load 16 words from memory.
+!   counters: NCRM=1, NRA=16
+! ----------------------------------------------------------------------------
+R 00001000 0000
+
+
+! ----------------------------------------------------------------------------
+! Section 2: read hit (RH)
+! Block 0x00 holds tag 0x00001, valid.
+!   counters: NCRH=1
+! ----------------------------------------------------------------------------
+R 00001001 0000
+
+
+! ----------------------------------------------------------------------------
+! Section 3: read miss on valid block with different tag (RM-valid)
+! Block 0x00 holds tag 0x00001 -> miss for tag 0x00002.  No write back under
+! WAWT.  Load 16 words.
+!   counters: NCRM=2, NRA=32
+! ----------------------------------------------------------------------------
+R 00002000 0000
+
+
+! ----------------------------------------------------------------------------
+! Section 4: read hit on the freshly loaded block (RH)
+!   counters: NCRH=2
+! ----------------------------------------------------------------------------
+R 00002001 0000
+
+
+! ----------------------------------------------------------------------------
+! Section 5: another RM-valid (different tag again) to reach NCRM=3
+! Block 0x00 holds tag 0x00002 -> miss for tag 0x00003.
+!   counters: NCRM=3, NRA=48
+! ----------------------------------------------------------------------------
+R 00003000 0000
+
+
+! ----------------------------------------------------------------------------
+! Section 6: write hits (WH) on the cached block (tag 0x00003)
+! Each write hit writes one word through to memory.
+!   counters: NCWH=1..4, NWA=1..4
+! ----------------------------------------------------------------------------
+W 00003001 1111
+W 00003002 2222
+W 00003003 3333
+W 00003004 4444
+
+
+! ----------------------------------------------------------------------------
+! Section 7: write misses on a valid block with different tags (WM-valid)
+! Each is write-allocate (load 16 words) plus write-through (1 word).
+! After each, the cached block carries the new tag.
+!   counters: NCWM=1..4, NRA=64..112, NWA=5..8
+! ----------------------------------------------------------------------------
+W 00004000 5555
+W 00005000 6666
+W 00006000 7777
+W 00007000 8888
+
+
+! ----------------------------------------------------------------------------
+! Section 8: write miss on invalid block (WM-invalid)
+! Cache block 0x01 has never been written -> cold write miss.
+!   counters: NCWM=5, NRA=128, NWA=9
+! ----------------------------------------------------------------------------
+W 00000010 9999
+
+
+! ----------------------------------------------------------------------------
+! Section 9: another WM-invalid to reach NCWM=6
+! Cache block 0x02 has never been written -> cold write miss.
+!   counters: NCWM=6, NRA=144, NWA=10
+! ----------------------------------------------------------------------------
+W 00000020 AAAA
+
+
+! ============================================================================
+! End of trace.  Final cumulative counter values:
+!   CPUR =   5   CPUW =  10
+!   NCRH =   2   NCRM =   3
+!   NCWH =   4   NCWM =   6
+!   NRA  = 144   NWA  =  10   (NWA == CPUW by construction of WAWT)
+!   WIB  =  16   BIC  = 256
+! ============================================================================
